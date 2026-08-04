@@ -145,7 +145,7 @@ class FrontLoadedAIDDWorkstation:
         print("="*75)
         for idx, lead in enumerate(optimal_leads, 1):
             print(f"[{idx}] SMILES: {lead['SMILES']}")
-            print(f    -> Affinity: {lead['Affinity']} | SA Score: {lead['SA_Score']} | SC Score: {lead['SC_Score']}")
+            print(f"    -> Affinity: {lead['Affinity']} | SA Score: {lead['SA_Score']} | SC Score: {lead['SC_Score']}")
             print("-" * 50)
             
         while True:
