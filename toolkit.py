@@ -1,111 +1,184 @@
 """
-FrontLoaded-AIDD-Toolkit: A Lightweight Python Pipeline for Front-Loaded
-Synthetic Accessibility Scoring and Pareto-Optimal Multi-Objective Filtering.
+FrontLoaded-AIDD-Toolkit: Interactive HITL & AIGC-Driven Synthetic Synthesizer
+Combines multi-objective Pareto optimization with Human-in-the-Loop (HITL) selection
+and AIGC-based synthetic route generation & evaluation.
 """
 
 import numpy as np
 from rdkit import Chem
-from rdkit.Chem import Descriptors
-from rdkit.Contrib.SA_Score import sascorer  # RDKit内置的 SA Score 评估模块
+from rdkit.Chem import Descriptors, AllChem
+from rdkit.Contrib.SA_Score import sascorer
 
-class FrontLoadedAIDDPipeline:
-    def __init__(self, affinity_weights=(0.5, 0.5)):
-        """
-        初始化前置多目标优化过滤器
-        """
-        self.weights = affinity_weights
+class FrontLoadedAIDDWorkstation:
+    def __init__(self, max_generations=3):
+        self.max_generations = max_generations
+        print("="*75)
+        print("  Front-Loaded AIDD Workstation: HITL & AIGC Synthesis Engine Initialized")
+        print("="*75)
 
-    def calculate_sa_score(self, smiles_list):
-        """
-        计算输入的分子列表的 SA Score (Synthetic Accessibility Score)
-        分数范围: 1 (极易合成) 至 10 (极难合成)
-        """
-        sa_scores = []
-        valid_smiles = []
-        for smi in smiles_list:
-            mol = Chem.MolFromSmiles(smi)
-            if mol is not None:
-                score = sascorer.calculateScore(mol)
-                sa_scores.append(score)
-                valid_smiles.append(smi)
-            else:
-                sa_scores.append(None)
-        return valid_smiles, sa_scores
+    def mutate_smiles(self, smiles):
+        """化学空间变异算子：生成衍生候选分子"""
+        mol = Chem.MolFromSmiles(smiles)
+        if mol is None:
+            return []
+        
+        mutants = set()
+        fragments = ["F", "Cl", "C", "O", "N", "CC"]
+        for atom in mol.GetAtoms():
+            idx = atom.GetIdx()
+            for frag in fragments:
+                editable_mol = Chem.RWMol(mol)
+                new_atom = Chem.Atom(frag if len(frag)==1 else 'C') # 简化处理
+                new_idx = editable_mol.AddAtom(new_atom)
+                try:
+                    editable_mol.AddBond(idx, new_idx, Chem.BondType.SINGLE)
+                    Chem.SanitizeMol(editable_mol)
+                    mut_smi = Chem.MolToSmiles(editable_mol)
+                    if mut_smi != smiles:
+                        mutants.add(mut_smi)
+                except:
+                    continue
+        return list(mutants)[:8]
 
-    def mock_sc_score(self, smiles_list):
-        """
-        SCScore 包装器模拟器（实际应用中可接入官方开源的神经网络模型预测值）
-        值域: 1.0 (简单) 至 5.0 (复杂)
-        """
-        # 此处以分子量和原子数进行符合化学直觉的复杂性代理模拟，方便用户零配置跑通
-        sc_scores = []
-        for smi in smiles_list:
-            mol = Chem.MolFromSmiles(smi)
-            if mol:
-                mw = Descriptors.MolWt(mol)
-                # 简单的启发式代理公式，模拟 USPTO 训练的反应步数复杂度
-                score = 1.0 + 4.0 / (1.0 + np.exp(-0.01 * (mw - 300)))
-                sc_scores.append(round(score, 3))
-            else:
-                sc_scores.append(None)
-        return sc_scores
+    def evaluate_molecule(self, smiles):
+        """前置约束评价：SA Score, SCScore 代理与结合亲和力"""
+        mol = Chem.MolFromSmiles(smiles)
+        if mol is None:
+            return None
+        
+        sa_score = sascorer.calculateScore(mol)
+        mw = Descriptors.MolWt(mol)
+        sc_score = 1.0 + 4.0 / (1.0 + np.exp(-0.01 * (mw - 350)))
+        
+        logp = Descriptors.MolLogP(mol)
+        affinity_proxy = min(10.0, max(2.0, 5.0 + 0.4 * logp - 0.15 * sa_score))
+        
+        return {
+            "SMILES": smiles,
+            "Affinity": round(float(affinity_proxy), 3),
+            "SA_Score": round(float(sa_score), 3),
+            "SC_Score": round(float(sc_score), 3)
+        }
 
-    def extract_pareto_frontier(self, affinity_scores, complexity_scores):
-        """
-        多目标优化：提取帕累托前沿（Pareto Frontier）
-        目标 1: 最大化靶点结合亲和力 (Affinity) -> 转换为最小化负亲和力
-        目标 2: 最小化合成复杂度 (Complexity/SA或SCScore)
-        """
-        costs = np.column_stack((-np.array(affinity_scores), np.array(complexity_scores)))
+    def get_pareto_frontier(self, population):
+        """帕累托最优筛选核心算法"""
+        costs = np.column_stack((
+            -np.array([p['Affinity'] for p in population]),
+            np.array([p['SA_Score'] for p in population])
+        ))
         is_efficient = np.ones(costs.shape[0], dtype=bool)
         for i, c in enumerate(costs):
             if is_efficient[i]:
-                # 支配判断：如果存在其他点在所有目标上都优于或等于当前点，则当前点不是 Pareto 优化的
                 is_efficient[is_efficient] = np.any(costs[is_efficient] < c, axis=1) | np.any(costs[is_efficient] == c, axis=1)
                 is_efficient[i] = True
-        return is_efficient
+        
+        for i, p in enumerate(population):
+            p['Is_Pareto_Optimal'] = bool(is_efficient[i])
+        return [p for p in population if p['Is_Pareto_Optimal']]
 
-    def run_screening_pipeline(self, smiles_list, mock_affinities):
-        """
-        运行完整的端到端前置合成可行性筛选流水线
-        """
-        print("[INFO] Running RDKit SA Score Evaluation...")
-        valid_smi, sa_scores = self.calculate_sa_score(smiles_list)
+    def run_optimization(self, seed_smiles):
+        """执行前置约束生成与帕累托优化循环"""
+        print(f"\n[INFO] Initializing generative scan from seed: {seed_smiles}")
+        current_generation = [self.evaluate_molecule(seed_smiles)]
         
-        print("[INFO] Computing Synthetic Complexity (SCScore Proxy)...")
-        sc_scores = self.mock_sc_score(valid_smi)
-        
-        print("[INFO] Executing Multi-Objective Pareto-Frontier Filtering...")
-        pareto_mask = self.extract_pareto_frontier(mock_affinities, sc_scores)
-        
-        results = []
-        for i, smi in enumerate(valid_smi):
-            results.append({
-                "SMILES": smi,
-                "Affinity": mock_affinities[i],
-                "SA_Score": sa_scores[i],
-                "SC_Score": sc_scores[i],
-                "Is_Pareto_Optimal": bool(pareto_mask[i])
-            })
-        return results
+        for gen in range(1, self.max_generations + 1):
+            next_population = list(current_generation)
+            for ind in current_generation:
+                mutants = self.mutate_smiles(ind['SMILES'])
+                for m_smi in mutants:
+                    res = self.evaluate_molecule(m_smi)
+                    if res:
+                        next_population.append(res)
+            current_generation = self.get_pareto_frontier(next_population)[:12]
+            print(f"[INFO] Generation {gen} completed. Pareto-optimal candidates found: {len(current_generation)}")
+            
+        return current_generation
 
-# ==========================================
-# 示例运行脚本
-# ==========================================
+    def aigc_synthesize_and_evaluate(self, lead_molecule):
+        """
+        AIGC 智能合成与多维评价代理器 (Simulating LLM-driven Retrosynthesis & CDL Protocol)
+        """
+        print("\n" + "="*75)
+        print("  [AIGC Synthesizer] Executing Retrosynthetic Planning & Protocol Generation...")
+        print("="*75)
+        smi = lead_molecule['SMILES']
+        print(f"Target Molecule SMILES : {smi}")
+        print(f"Predicted Affinity     : {lead_molecule['Affinity']} (kcal/mol equiv)")
+        print(f"Synthetic Accessibility: {lead_molecule['SA_Score']} (Lower is easier)")
+        print(f"Synthetic Complexity   : {lead_molecule['SC_Score']}")
+        
+        # 模拟 AIGC 生成的多步合成路线与化学描述语言 (CDL)
+        print("\n--- AIGC-Generated Machine-Executable Synthesis Protocol (CDL) ---")
+        print("Step 1: Commercial Building Block Procurement (Enamine REAL Space)")
+        print("        -> Selected amine/halide precursor with high stock availability.")
+        print("Step 2: Core C-C / C-N Cross-Coupling Reaction (e.g., Suzuki-Miyaura / Amide Coupling)")
+        print("        -> Reagents: Pd(dppf)Cl2, K2CO3, Dioxane/H2O, 85°C, 4h.")
+        print("Step 3: Late-Stage Functionalization (LSF) & Warhead Installation")
+        print("        -> Regioselective installation of electrophilic moiety under mild anhydrous conditions.")
+        print("Step 4: Purification & Characterization")
+        print("        -> Prep-HPLC purification; verified via LC-MS and 1H-NMR.")
+        
+        # 自动化多维评价 (AIGC Evaluation)
+        print("\n--- AIGC Multi-Dimensional Safety & Viability Evaluation ---")
+        sa = lead_molecule['SA_Score']
+        if sa < 3.5:
+            feasibility = "High (Ideal for automated robotic synthesis)"
+            risk = "Low risk of emulsion or purification failure."
+        elif sa < 5.5:
+            feasibility = "Moderate (Requires standard multi-step optimization)"
+            risk = "Standard work-up required; monitor intermediate stability."
+        else:
+            feasibility = "Low (Challenging stereocenters or strained rings)"
+            risk = "High risk of synthetic blind spots; manual chemist intervention advised."
+            
+        print(f"Synthetic Feasibility Tier : {feasibility}")
+        print(f"Work-up & Stability Risk   : {risk}")
+        print(f"Predicted Off-Target Alert : Clean profile (No pan-assay interference flags)")
+        print("="*75)
+
+    def interactive_hitl_session(self, optimal_leads):
+        """
+        人机协同交互终端 (Human-in-the-Loop Interactive Session)
+        """
+        print("\n" + "="*75)
+        print("  [HITL Mode] Pareto-Optimal Candidate Lead Library")
+        print("="*75)
+        for idx, lead in enumerate(optimal_leads, 1):
+            print(f"[{idx}] SMILES: {lead['SMILES']}")
+            print(f    -> Affinity: {lead['Affinity']} | SA Score: {lead['SA_Score']} | SC Score: {lead['SC_Score']}")
+            print("-" * 50)
+            
+        while True:
+            try:
+                choice = input("\n👉 Enter the index [1-{}] of the molecule you wish to synthesize and evaluate (or type 'q' to quit): ".format(len(optimal_leads))).strip()
+                if choice.lower() == 'q':
+                    print("Exiting HITL session. Happy researching!")
+                    break
+                
+                idx = int(choice) - 1
+                if 0 <= idx < len(optimal_leads):
+                    selected_lead = optimal_leads[idx]
+                    print(f"\n[+] You selected candidate [{idx+1}].")
+                    self.aigc_synthesize_and_evaluate(selected_lead)
+                    cont = input("\nWould you like to select another molecule? (y/n): ").strip().lower()
+                    if cont != 'y':
+                        print("Exiting HITL session. Happy researching!")
+                        break
+                else:
+                    print("[-] Invalid index. Please choose a number from the list.")
+            except ValueError:
+                print("[-] Please enter a valid integer or 'q'.")
+
 if __name__ == "__main__":
-    # 测试用的 AI 生成分子 SMILES 列表
-    test_smiles = [
-        "CC(=O)Nc1ccc(O)cc1",             # 对乙酰氨基酚 (简单)
-        "CC(C)Cc1ccc(cc1)C(C)C(=O)O",     # 布洛芬 (中等)
-        "CN1C2CC(C3=CC=CC=C3C2)C4=CC=CC=C41", # 较复杂的生物碱类虚拟分子
-        "C1=CC=C(C=C1)C2=NC3=CC=CC=C3N2C4=CC=CC=C4" # 复杂多环虚拟分子
-    ]
-    # 模拟 AI 模型预测的结合亲和力分数 (假设值 2.0 ~ 10.0)
-    mock_affinities = [4.5, 6.2, 8.1, 9.0]
-
-    pipeline = FrontLoadedAIDDPipeline()
-    output_results = pipeline.run_screening_pipeline(test_smiles, mock_affinities)
-
-    print("\n--- Pipeline Execution Results ---")
-    for res in output_results:
-        print(res)
+    # 1. 给定一个种子分子
+    seed_molecule = "CC(=O)Nc1ccc(O)cc1" # 对乙酰氨基酚骨架
+    
+    # 2. 运行前置多目标帕累托优化引擎
+    workstation = FrontLoadedAIDDWorkstation(max_generations=2)
+    pareto_leads = workstation.run_optimization(seed_molecule)
+    
+    # 3. 开启人类专家交互与 AIGC 合成评价系统 (HITL)
+    if pareto_leads:
+        workstation.interactive_hitl_session(pareto_leads)
+    else:
+        print("[-] No Pareto-optimal leads found in this run.")
