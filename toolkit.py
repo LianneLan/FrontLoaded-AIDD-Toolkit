@@ -61,7 +61,7 @@ class InteractiveCovalentEngine:
         }
 
     def run_interactive_workflow(self):
-        """真正由用户自主输入驱动的交互工作流"""
+        """由用户自主输入驱动的交互工作流"""
         print("\n" + "-"*75)
         user_smi = input("👉 请输入您想要设计的共价靶向分子 SMILES (例如: C=CC(=O)Nc1ccc(O)cc1): ").strip()
         print("-" * 75)
@@ -99,5 +99,5 @@ if __name__ == "__main__":
         engine.run_interactive_workflow()
         cont = input("\n👉 是否继续测试另一个分子？(y/n): ").strip().lower()
         if cont != 'y':
-            print("退出交互工作站。祝您的综述发表顺利！")
+            print("退出交互工作站！")
             break
