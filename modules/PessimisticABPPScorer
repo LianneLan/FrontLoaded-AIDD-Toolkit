@@ -1,0 +1,52 @@
+import numpy as np
+
+class PessimisticABPPScorer:
+    """
+    Quantifies off-target risk and epistemic uncertainty over sparse ABPP chemoproteomics data 
+    using Deep Ensemble variance to penalize Out-of-Distribution (OOD) molecules in RL loops.
+    """
+    def __init__(self, ensemble_models, lambda_offtarget=1.5, gamma_uncertainty=2.0):
+        self.models = ensemble_models  # List of trained proxy models
+        self.lam = lambda_offtarget
+        self.gamma = gamma_uncertainty
+
+    def evaluate_pessimistic_reward(self, mol_features: np.ndarray, base_front_loaded_reward: float) -> float:
+        """
+        Computes uncertainty-aware pessimistic reward for RL generator.
+        """
+        # Collect predictions across all ensemble members
+        predictions = [model.predict(mol_features) for model in self.models]
+        
+        mu_offtarget = np.mean(predictions)          # Estimated off-target liability
+        sigma_epistemic = np.std(predictions)        # Epistemic uncertainty (OOD penalty)
+
+        # Pessimistic Reward Calculation
+        penalty = (self.lam * mu_offtarget) + (self.gamma * sigma_epistemic)
+        final_reward = base_front_loaded_reward - penalty
+        
+        return max(0.0, final_reward), mu_offtarget, sigma_epistemic
+
+# Mock Ensemble Model for Demonstration
+class DummyProxyModel:
+    def __init__(self, noise_scale):
+        self.noise_scale = noise_scale
+    def predict(self, features):
+        # Simulates off-target score prediction + model divergence on OOD data
+        base_score = np.dot(features, features.T) * 0.1
+        return base_score + np.random.normal(0, self.noise_scale)
+
+# Example Usage Demonstration
+if __name__ == "__main__":
+    # Create an ensemble of 5 surrogate models
+    ensemble = [DummyProxyModel(noise_scale=0.05 * (i + 1)) for i in range(5)]
+    scorer = PessimisticABPPScorer(ensemble_models=ensemble)
+
+    # Case A: In-Distribution Molecule (Low Uncertainty)
+    in_dist_features = np.array([0.2, 0.1, 0.3])
+    reward_a, mu_a, sigma_a = scorer.evaluate_pessimistic_reward(in_dist_features, base_front_loaded_reward=5.0)
+    print(f"[In-Distribution] Reward: {reward_a:.2f} | Off-Target Mean: {mu_a:.3f} | Uncertainty (Std): {sigma_a:.3f}")
+
+    # Case B: Out-of-Distribution Molecule (High Uncertainty -> Reward Penalized!)
+    ood_features = np.array([2.5, 3.1, 1.8])
+    reward_b, mu_b, sigma_b = scorer.evaluate_pessimistic_reward(ood_features, base_front_loaded_reward=5.0)
+    print(f"[Out-of-Distribution] Reward: {reward_b:.2f} | Off-Target Mean: {mu_b:.3f} | Uncertainty (Std): {sigma_b:.3f}")
