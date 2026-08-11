@@ -6,17 +6,15 @@ class InProteinReactivityEvaluator:
     (Delta G_gas) into effective in-protein reaction barriers (Delta G_protein)
     based on local active-site microenvironment descriptors.
     """
-    def __init__(self, alpha_pka=0.59, beta_field=0.12, std_pka=8.5):
-        # Alpha: RT ln(10) conversion factor at 298K (~0.59 kcal/mol per pKa unit)
+    def __init__(self, alpha_pka: float = 0.59, beta_field: float = 0.12, std_pka: float = 8.5):
+        # alpha: RT ln(10) conversion factor at 298K (~0.59 kcal/mol per pKa unit)
         self.alpha = alpha_pka
         self.beta = beta_field
-        self.std_pka = std_pka # Standard Cys pKa in bulk water (~8.5)
+        self.std_pka = std_pka  # Standard Cys/Lys pKa in bulk water (~8.5)
 
     def calculate_microenvironment_delta(self, target_pka: float, local_electric_field: float, desolvation_penalty: float) -> float:
         """
         Calculates Delta_Delta_G_microenvironment (kcal/mol).
-        - Depressed pKa (e.g., pKa=6.0) increases nucleophilicity, lowering barrier.
-        - Strong aligning electric field stabilizes transition state, lowering barrier.
         """
         pka_shift_term = -self.alpha * (self.std_pka - target_pka)
         field_effect_term = -self.beta * local_electric_field
@@ -32,15 +30,3 @@ class InProteinReactivityEvaluator:
         ddg = self.calculate_microenvironment_delta(target_pka, local_electric_field, desolvation_penalty)
         delta_g_protein = delta_g_gas_mldft + ddg
         return max(0.1, delta_g_protein)  # Physical lower bound limit
-
-# Example Usage Demonstration
-if __name__ == "__main__":
-    evaluator = InProteinReactivityEvaluator()
-    gas_phase_barrier = 18.5  # kcal/mol from ML-DFT (e.g. DeePHF)
-    predicted_pka = 5.8      # Depressed Lys/Cys pKa in catalytic pocket
-    e_field = 15.2           # MV/cm local electrostatic field
-    desolv = 1.2             # kcal/mol desolvation penalty
-    
-    effective_barrier = evaluator.predict_in_protein_barrier(gas_phase_barrier, predicted_pka, e_field, desolv)
-    print(f"Gas-Phase ML-DFT Barrier: {gas_phase_barrier:.2f} kcal/mol")
-    print(f"Effective In-Protein Barrier: {effective_barrier:.2f} kcal/mol")
