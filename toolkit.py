@@ -1,7 +1,7 @@
 """
 Covalent-AIDD-Toolkit: Interactive Front-Loaded Pareto Optimization Engine
 Allows researchers to dynamically input any target/seed molecule, profiles its 
-covalent warhead, applies protein microenvironment reactivity correction,
+covalent warhead, applies protein microenvironment reactivity calibration,
 evaluates pessimistic off-target risk, performs multi-objective Pareto filtering,
 and generates CDL protocols.
 """
@@ -9,6 +9,7 @@ and generates CDL protocols.
 import numpy as np
 from rdkit import Chem
 from rdkit.Chem import Descriptors
+
 try:
     from rdkit.Chem import RDConfig
     import os
@@ -18,14 +19,16 @@ try:
 except ImportError:
     from rdkit.Contrib.SA_Score import sascorer
 
-# 从本地 modules 目录导入核心算法类 (闭环关键!)
+# 从本地 modules 目录导入核心算法类 (彻底实现闭环集成!)
 from modules.microenv_corrector import InProteinReactivityEvaluator
 from modules.pessimistic_scorer import PessimisticABPPScorer
+
 
 class MockABPPModel:
     """内部代理模型类，用于模拟 Deep Ensemble 预测"""
     def __init__(self, seed_scale):
         self.scale = seed_scale
+
     def predict(self, features):
         return np.dot(features, features.T) * 0.05 + np.random.normal(0, self.scale)
 
@@ -60,16 +63,20 @@ class InteractiveCovalentEngine:
         for name, smarts in warheads.items():
             if mol.HasSubstructMatch(smarts):
                 detected_warhead = name
-                if "Acrylamide" in name: reactivity_score = 7.5
-                elif "Chloroacetamide" in name: reactivity_score = 8.5
-                elif "Epoxide" in name: reactivity_score = 6.0
+                if "Acrylamide" in name:
+                    reactivity_score = 7.5
+                elif "Chloroacetamide" in name:
+                    reactivity_score = 8.5
+                elif "Epoxide" in name:
+                    reactivity_score = 6.0
                 break
                 
         return detected_warhead, reactivity_score
 
     def evaluate_candidate(self, smiles, target_pka=6.2, e_field=12.0):
         mol = Chem.MolFromSmiles(smiles)
-        if mol is None: return None
+        if mol is None:
+            return None
         
         # 1. 基础物理化学性质与 SA Score
         sa_score = sascorer.calculateScore(mol)
